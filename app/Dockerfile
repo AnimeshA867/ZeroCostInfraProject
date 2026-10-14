@@ -14,7 +14,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 # Stage 2: Runtime
 
-FROM python:3.12-slim AS runner
+FROM python:3.12-slim as runner
 RUN groupadd -g 10001 appgroup && \
     useradd -u 10001 -g appgroup -s /sbin/nologin -M appuser
 
