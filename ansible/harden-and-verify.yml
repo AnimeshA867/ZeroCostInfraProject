@@ -1,0 +1,52 @@
+---
+- name: Post-Provisioning Runtime Config & Security Verification
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Fetch Terraform Output
+      ansible.buildin.commands:
+        cmd: terraform output -json
+        chdir: ../terraform
+      register: tf_outputs
+      changed_when: false
+    - name: Set Terraform Output Variables
+      ansible.buildin.set_fact:
+        tf_data: "{{ tf_outputs.stdout | from_json }}"
+    
+    - name: Environment File creating for Container Usage
+      ansible.builtin.copy:
+        dest: ./.env.runtime
+        mode: "0600"
+        content: |
+          DYNAMO_TABLE={{tf_data.dynamo_table_name.value}}
+          AUDIT_BUCKET={{tf_data.s3_bucket_name.value}}
+
+        
+    - name: Verify API container is NOT running as root (UID 0)
+      ansible.builtin.command:
+        cmd: docker inspect --format='{{ '{{' }}.Config.User{{ '}}' }}' api-service
+      register: container_user
+      changed_when: false
+      failed_when: container_user.stdout == "" or container_user.stdout == "0" or container_user.stdout == "root"
+    
+    - name: Smoke Test - Check Health Endpoint
+      ansible.builtin.uri:
+        url: http://localhost:8000/health
+        method: GET
+        status_code:
+          - 200
+      register: health_check
+      retries: 5
+      delay: 2
+      until: health_check.status==200
+    
+    - name: Smoke Test- Dispatch Test Order to SQS & DynamoDB
+      ansible.builtin.uri:
+        url: http://localhost:8000/order
+        method: POST
+        body_format: json
+        body:
+          item: "ansible-smoke-test"
+          quantity: 1
+        status_code:
+          - 200
