@@ -1,0 +1,79 @@
+name: InfraOps Deployment
+
+on: 
+    push:
+        branches: ["main"]
+    pull_request:
+        branches: ["main"]
+
+jobs:
+    lint-and-iac-sec:
+        name: 1. Dockerfile & Terraform Security Gate
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout Code
+              uses: actions/checkout@v4
+
+            - name: Lint Dockerfile with Hadolint
+              uses: hadolint/hadolint-action@v3.1.0
+              with:
+                dockerfile: app/Dockerfile
+                failure-threshold: warning
+            - name: Setup Terraform
+              uses: hashicorp/setup-terraform@v2
+            
+            - name: Terraform Format and Validate
+              working-directory: ./terraform
+              run: |
+                terraform fmt -check
+                terraform init -backend=false
+                terraform validate
+
+            - name: Scan Terraform for Misconfiguration with Trivvy
+              uses: aquasecurity/trivy-action@v1.0.0
+              with:
+                scan-type: fs
+                scan-path: ./terraform
+                severity: CRITICAL,HIGH,MEDIUM
+                ignore-unfixed: true
+    build-and-trivy-scan:
+        name:  2. Build Docker Image & Scan for Vulnerabilities
+        runs-on: ubuntu-latest
+        needs: lint-and-iac-sec
+        steps:
+            - name: Checkout Code   
+              uses: actions/checkout@v4
+            - name: Build Hardened Image
+              run: docker build -t infraops-api:${{ github.sha }} ./app
+
+            - name: Run Trivy Vulnerability Scanner on Image
+              uses: aquasecurity/trivy-action@0.28.0
+              with:
+                image-ref: "infraops-api:${{ github.sha }}"
+                format: "table"
+                exit-code: "1"
+                ignore-unfixed: true
+                vuln-type: "os,library"
+                severity: "CRITICAL,HIGH"
+
+    integration-smoke-test:
+        name: 3. Ephemeral LocalStack + Terraform + Ansible E2E Test
+        needs: build-and-trivy-scan
+        runs-on: ubuntu-latest
+        steps:
+        - name: Checkout Code
+          uses: actions/checkout@v4
+
+        - name: Setup Terraform & Ansible
+          uses: hashicorp/setup-terraform@v3
+          with:
+            terraform_wrapper: false
+
+        - name: Install Ansible
+          run: pip install ansible
+
+        - name: Boot Stack & Run E2E Verification via Makefile
+          run: |
+            make up
+            make verify
+            make down

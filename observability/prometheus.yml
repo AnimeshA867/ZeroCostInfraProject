@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 1m
+  evaluation_interval: 1m
+
+scrape_configs:
+  - job_name: "api-service"
+    scrape_native_histograms: false
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - "api-service:3000"
